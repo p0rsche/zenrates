@@ -1,0 +1,8 @@
+{
+    "uuid": "zenrates@p0rsche",
+    "name": "Currency rates",
+    "contributors": "Vladimir Gerasimov - Author",
+    "website": "https://p0rsche.github.io",
+    "description": "Shows currency rates from stock exchange in real-time",
+    "max-instances": 3
+}
