@@ -5,6 +5,19 @@ const Lang = imports.lang;
 const Soup = imports.gi.Soup;
 const GLib = imports.gi.GLib;
 
+const DEFAULT_RATE = "Loading...";
+const DEFAULT_SOURCE = "ws://zenrus.ru:8888/";
+const DEFAULT_CURRENCY = "usd";
+
+const ZENRUS_WS_MAPPING = {
+    usd: 0,
+    eur: 1,
+    brent: 2,
+    bitcoin: 9,
+    eth: 10,
+    bch: 11,
+}
+
 function HelloDesklet(metadata, desklet_id) {
     this._init(metadata, desklet_id);
 }
@@ -17,86 +30,75 @@ HelloDesklet.prototype = {
 
         this.initSettings(metadata, desklet_id);
 
-        this.setupClient();
+        this.initConnection();
 
         this.setupUI();
+
+        this.run();
     },
     // called when extension is disabled/removed
     on_desklet_removed: function () {
-        this.socketClient.close();
+        this._websocketConnection.close(Soup.WebsocketCloseCode.NORMAL, "");
+        this._httpSession.close();
     },
 
-    onRefreshIntervalChanged: function() {
-        console.log('refresh interval changed')
+    initConnection: function() {
+        this._httpSession = new Soup.Session({ ssl_use_system_ca_file: true });
+        this._httpSession.httpsAliases = ["ws"];
+        Soup.Session.prototype.add_feature.call(this._httpSession, new Soup.ProxyResolverDefault());
     },
 
     onSettingsChanged: function() {
-        console.log('settings changed')
+        global.log("onSettingsChanged called");
+    },
+
+    onCurrencyChanged: function() {
+        this.updateExchangeRate();
     },
 
     initSettings: function(metadata, desklet_id) {
         this.settings = new Settings.DeskletSettings(this, metadata.uuid, desklet_id);
-        this.settings.bind("currency", "cfgCurrency", this.onSettingsChanged);
-        this.settings.bind("source", "cfgSource", this.onSettingsChanged);
-        this.settings.bind("refreshInterval", "cfgRefreshInterval", this.onRefreshIntervalChanged);
-
-        this.cfgCurrency = this.cfgCurrency || "usd";
-        this.cfgSource = this.cfgSource || "zenrus";
-        this.cfgRefreshInterval = this.cfgRefreshInterval || 10;
+        this.settings.bind("currency", "cfgCurrency", this.onCurrencyChanged);
+        this.cfgCurrency = this.cfgCurrency || DEFAULT_CURRENCY;
+        this.cfgSource = DEFAULT_SOURCE;
+        this.exchangeRate = DEFAULT_RATE;
+        this._lastReceivedRates = [];
     },
 
     setupUI: function() {
         // main container for the desklet
         this.window = new St.Bin();
-        this.text = new St.Label();
-        this.text.set_text("Hello, world!");
-        
+        this.text = new St.Label({
+            style_class: 'exchange-rate'
+        });
+        this.text.set_text(this.exchangeRate);
         this.window.add_actor(this.text);
         this.setContent(this.window);
-        global.log("UI setupped successfully");
     },
 
-    setupClient: function() {
-        this.apiClient = new ApiClient();
-        this.socketClient = new SocketClient(this.apiClient);
+    updateExchangeRate: function() {
+        this.exchangeRate = this._lastReceivedRates[ZENRUS_WS_MAPPING[this.cfgCurrency]];
+        this.text.set_text(this.cfgCurrency.toUpperCase() + " " + this.exchangeRate);
+    },
+
+    run: function() {
+        let message = new Soup.Message({
+            method: "GET",
+            uri: new Soup.URI(this.cfgSource)
+        });
+
+        this._httpSession.websocket_connect_async(message, null, null, null, Lang.bind(this, function(session, res) {
+            this._websocketConnection = session.websocket_connect_finish(res);
+
+            this._websocketConnection.connect("message", Lang.bind(this, function(connection, type, message) {
+                let data = message.get_data();
+                this._lastReceivedRates = data.toString().split(';');
+                this.updateExchangeRate();
+            }));
+        }));
     }
 }
 
 function main(metadata, desklet_id) {
     return new HelloDesklet(metadata, desklet_id);
 }
-
-const SocketClient = new Lang.Class({
-    Name: "SocketClient",
-
-    _init: function(apiClient) {
-        apiClient._httpSession.httpsAliases = ["ws"];
-
-        let message = new Soup.Message({
-            method: "GET",
-            uri: new Soup.URI("ws://zenrus.ru:8888/")
-        });
-
-        apiClient._httpSession.websocket_connect_async(message, null, null, null, Lang.bind(this, function(session, res) {
-            this._websocketConnection = session.websocket_connect_finish(res);
-
-            this._websocketConnection.connect("message", Lang.bind(this, function(connection, type, message) {
-                var data = message.get_data();
-                global.log("message get data: " + data);
-            }));
-        }));
-    },
-
-    close: function() {
-        this._websocketConnection.close(Soup.WebsocketCloseCode.NORMAL, "");
-    }
-});
-
-const ApiClient = new Lang.Class({
-    Name: "ApiClient",
-
-    _init: function() {
-        this._httpSession = new Soup.Session({ ssl_use_system_ca_file: true });
-        Soup.Session.prototype.add_feature.call(this._httpSession, new Soup.ProxyResolverDefault());
-    },
-});
