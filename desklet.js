@@ -43,8 +43,7 @@ HelloDesklet.prototype = {
     },
 
     initConnection: function() {
-        this._httpSession = new Soup.Session({ ssl_use_system_ca_file: true });
-        this._httpSession.httpsAliases = ["ws"];
+        this._httpSession = new Soup.Session();
         Soup.Session.prototype.add_feature.call(this._httpSession, new Soup.ProxyResolverDefault());
     },
 
@@ -86,7 +85,6 @@ HelloDesklet.prototype = {
             method: "GET",
             uri: new Soup.URI(this.cfgSource)
         });
-
         this._httpSession.websocket_connect_async(message, null, null, null, Lang.bind(this, function(session, res) {
             this._websocketConnection = session.websocket_connect_finish(res);
 
